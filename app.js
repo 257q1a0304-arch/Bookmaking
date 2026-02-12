@@ -78,7 +78,8 @@ const RaceModule = {
         if (!this.races.length) {
             this.addRace({ id: 1, name: 'Race 1', ended: false });
         }
-        if (!this.currentRaceId) {
+        const currentRaceId = this.getCurrentRaceId();
+        if (!currentRaceId || !this.races.some(race => race.id === currentRaceId)) {
             this.setCurrentRace(this.races[0].id);
         }
         return this.currentRaceId;
@@ -750,9 +751,16 @@ const UIModule = {
                 third: parseInt(document.getElementById('third-place')?.value, 10)
             };
 
-            const bets = BetModule.getBets();
+            const currentRaceId = RaceModule.getCurrentRaceId();
+            const bets = BetModule.getBets().filter(bet => bet.raceId === currentRaceId);
             const settledBets = SettlementModule.settleBets(bets, results);
-            BetModule.bets = settledBets;
+            BetModule.bets = BetModule.getBets().map(bet => {
+                if (bet.raceId !== currentRaceId) {
+                    return bet;
+                }
+                const settled = settledBets.find(item => item.id === bet.id);
+                return settled || bet;
+            });
             BetModule.persist();
 
             const resultsContainer = document.getElementById('settlement-results');
