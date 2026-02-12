@@ -181,11 +181,16 @@ const BetModule = {
         const currentRaceId = RaceModule.getCurrentRaceId();
         let needsSave = false;
         this.bets = this.bets.map(bet => {
+            let updatedBet = bet;
             if (bet.raceId === undefined || bet.raceId === null) {
+                updatedBet = { ...updatedBet, raceId: currentRaceId };
                 needsSave = true;
-                return { ...bet, raceId: currentRaceId };
             }
-            return bet;
+            if (updatedBet.bettingTax === undefined || updatedBet.bettingTax === null) {
+                updatedBet = { ...updatedBet, bettingTax: '' };
+                needsSave = true;
+            }
+            return updatedBet;
         });
         if (needsSave) {
             StorageModule.saveData('bets', this.bets);
@@ -206,6 +211,7 @@ const BetModule = {
             type: 'Cash',
             odds: '',
             amount: '',
+            bettingTax: '',
             payout: ''
         };
     },
@@ -226,8 +232,19 @@ const TaxModule = {
 // Calculation Module
 const CalculationModule = {
     calculateTotal: function (bets) {
-        return bets.reduce((total, bet) => total + (parseFloat(bet.amount) || 0), 0);
+        return bets.reduce((total, bet) => total + normalizeAmountValue(bet.amount), 0);
     }
+};
+
+const normalizeAmountValue = function (value) {
+    const amountValue = parseFloat(value);
+    if (!Number.isFinite(amountValue)) {
+        return 0;
+    }
+    if (Number.isInteger(amountValue) && amountValue >= 1 && amountValue <= 10) {
+        return amountValue * 1000;
+    }
+    return amountValue;
 };
 
 // Settlement Module
@@ -245,15 +262,20 @@ const SettlementModule = {
         return false;
     },
     calculatePayoutAmount: function (bet, oddsValue, amountValue, isWinner) {
-        if (!Number.isFinite(oddsValue) || !Number.isFinite(amountValue)) {
+        const normalizedAmount = normalizeAmountValue(amountValue);
+        if (!Number.isFinite(oddsValue) || !Number.isFinite(normalizedAmount)) {
             return 0;
         }
-        const tax = TaxModule.calculateTax(amountValue);
+        if (!isWinner) {
+            return 0;
+        }
         if (bet.type === 'Cash') {
-            return isWinner ? (oddsValue * amountValue) + amountValue : 0;
+            return (oddsValue * normalizedAmount) + normalizedAmount;
         }
         if (bet.type === 'Credit') {
-            return isWinner ? (oddsValue * amountValue) - tax : amountValue + tax;
+            const bettingTaxValue = parseFloat(bet.bettingTax);
+            const normalizedTax = Number.isFinite(bettingTaxValue) ? bettingTaxValue : 0;
+            return (oddsValue * normalizedAmount) - normalizedTax;
         }
         return 0;
     },
@@ -276,11 +298,36 @@ const SettlementModule = {
 // Summary Module
 const SummaryModule = {
     generateSummary: function () {
-        const totalBets = CalculationModule.calculateTotal(BetModule.getBets());
-        const totalTax = TaxModule.calculateTax(totalBets);
+        const bets = BetModule.getBets();
+        let totalCashExposure = 0;
+        let totalCreditExposure = 0;
+        let totalTaxCollected = 0;
+
+        bets.forEach(bet => {
+            const oddsValue = parseFloat(bet.odds);
+            const amountValue = normalizeAmountValue(bet.amount);
+            if (!Number.isFinite(oddsValue) || !Number.isFinite(amountValue)) {
+                return;
+            }
+            const payoutValue = SettlementModule.calculatePayoutAmount(bet, oddsValue, amountValue, true);
+            if (bet.type === 'Cash') {
+                totalCashExposure += payoutValue;
+                return;
+            }
+            if (bet.type === 'Credit') {
+                const bettingTaxValue = parseFloat(bet.bettingTax);
+                totalCreditExposure += payoutValue;
+                totalTaxCollected += Number.isFinite(bettingTaxValue) ? bettingTaxValue : 0;
+            }
+        });
+
+        const totalPayoutLiability = totalCashExposure + totalCreditExposure;
+
         return {
-            totalBets: totalBets,
-            totalTax: totalTax
+            totalCashExposure: totalCashExposure,
+            totalCreditExposure: totalCreditExposure,
+            totalTaxCollected: totalTaxCollected,
+            totalPayoutLiability: totalPayoutLiability
         };
     }
 };
@@ -289,9 +336,15 @@ const SummaryModule = {
 const UIModule = {
     initialized: false,
     sessionActive: false,
+    sessionControlsBound: false,
     horseControlsBound: false,
     betControlsBound: false,
+    summaryControlsBound: false,
     handleSessionControls: function () {
+        if (this.sessionControlsBound) {
+            return;
+        }
+
         const startBtn = document.getElementById('start-session-btn');
         const restoreBtn = document.getElementById('restore-session-btn');
 
@@ -306,6 +359,24 @@ const UIModule = {
                 this.restoreSession();
             });
         }
+
+        document.addEventListener('click', (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) {
+                return;
+            }
+
+            if (target.closest('#start-session-btn')) {
+                this.startSessionFromInputs();
+                return;
+            }
+
+            if (target.closest('#restore-session-btn')) {
+                this.restoreSession();
+            }
+        });
+
+        this.sessionControlsBound = true;
     },
     startSessionFromInputs: function () {
         if (this.sessionActive) {
@@ -360,6 +431,7 @@ const UIModule = {
             this.handleRaceControls();
             this.handleHorseControls();
             this.handleBetControls();
+            this.handleSummaryControls();
             this.handleKeyboardNavigation();
             this.handleSettlement();
             this.initialized = true;
@@ -394,7 +466,7 @@ const UIModule = {
         }
         const currentRaceId = RaceModule.getCurrentRaceId();
         const races = RaceModule.getRaces();
-        tabs.innerHTML = '';
+        tabs.innerHTML = ''; 
         races.forEach(race => {
             const tab = document.createElement('button');
             tab.type = 'button';
@@ -556,6 +628,54 @@ const UIModule = {
 
         this.betControlsBound = true;
     },
+    handleSummaryControls: function () {
+        if (this.summaryControlsBound) {
+            return;
+        }
+
+        const summaryBtn = document.getElementById('view-summary-btn');
+        if (summaryBtn) {
+            summaryBtn.addEventListener('click', () => {
+                this.renderSummary();
+            });
+        }
+
+        this.summaryControlsBound = true;
+    },
+    renderSummary: function () {
+        const container = document.getElementById('summary-content');
+        if (!container) {
+            return;
+        }
+
+        const summary = SummaryModule.generateSummary();
+        const formatValue = value => (Number.isFinite(value) ? value.toFixed(2) : '0.00');
+
+        container.innerHTML = `
+            <div class="summary-grid">
+                <div class="summary-card">
+                    <h3>Total Cash Exposure</h3>
+                    <div class="summary-value">${formatValue(summary.totalCashExposure)}</div>
+                    <div class="summary-label">Cash payouts at risk</div>
+                </div>
+                <div class="summary-card">
+                    <h3>Total Credit Exposure</h3>
+                    <div class="summary-value">${formatValue(summary.totalCreditExposure)}</div>
+                    <div class="summary-label">Credit liabilities</div>
+                </div>
+                <div class="summary-card">
+                    <h3>Total Tax Collected</h3>
+                    <div class="summary-value">${formatValue(summary.totalTaxCollected)}</div>
+                    <div class="summary-label">Betting tax retained</div>
+                </div>
+                <div class="summary-card">
+                    <h3>Total Payout Liability</h3>
+                    <div class="summary-value">${formatValue(summary.totalPayoutLiability)}</div>
+                    <div class="summary-label">Overall exposure</div>
+                </div>
+            </div>
+        `;
+    },
     renderHorseList: function () {
         const container = document.getElementById('horse-list');
         if (!container) {
@@ -689,7 +809,7 @@ const UIModule = {
 
         const thead = document.createElement('thead');
         const headerRow = document.createElement('tr');
-        ['Customer', 'Type', 'Odds', 'Amount', 'Payout', 'Actions'].forEach(title => {
+        ['Customer', 'Type', 'Odds', 'Amount', 'Betting Tax', 'Payout', 'Actions'].forEach(title => {
             const th = document.createElement('th');
             th.textContent = title;
             headerRow.appendChild(th);
@@ -730,12 +850,8 @@ const UIModule = {
         const customerCell = document.createElement('td');
         const customerInput = document.createElement('input');
         customerInput.type = 'text';
-        customerInput.placeholder = 'Customer name / card number';
+        customerInput.placeholder = 'Customer name';
         customerInput.value = bet.customer;
-        customerInput.addEventListener('input', () => {
-            bet.customer = customerInput.value;
-            BetModule.persist();
-        });
         customerCell.appendChild(customerInput);
 
         const typeCell = document.createElement('td');
@@ -746,14 +862,6 @@ const UIModule = {
             option.textContent = optionValue;
             typeSelect.appendChild(option);
         });
-        typeSelect.value = bet.type;
-        typeSelect.addEventListener('change', () => {
-            bet.type = typeSelect.value;
-            typeSelect.classList.toggle('bet-type-cash', bet.type === 'Cash');
-            typeSelect.classList.toggle('bet-type-credit', bet.type === 'Credit');
-            updatePayout();
-        });
-        typeSelect.dispatchEvent(new Event('change'));
         typeCell.appendChild(typeSelect);
 
         const oddsCell = document.createElement('td');
@@ -763,6 +871,7 @@ const UIModule = {
         oddsInput.step = '0.01';
         oddsInput.placeholder = 'Odds';
         oddsInput.value = bet.odds;
+        oddsCell.appendChild(oddsInput);
 
         const amountCell = document.createElement('td');
         const amountInput = document.createElement('input');
@@ -771,6 +880,16 @@ const UIModule = {
         amountInput.step = '0.01';
         amountInput.placeholder = 'Amount';
         amountInput.value = bet.amount;
+        amountCell.appendChild(amountInput);
+
+        const bettingTaxCell = document.createElement('td');
+        const bettingTaxInput = document.createElement('input');
+        bettingTaxInput.type = 'number';
+        bettingTaxInput.min = '0';
+        bettingTaxInput.step = '0.01';
+        bettingTaxInput.placeholder = 'Bet tax';
+        bettingTaxInput.value = bet.bettingTax ?? '';
+        bettingTaxCell.appendChild(bettingTaxInput);
 
         const payoutCell = document.createElement('td');
         const payoutInput = document.createElement('input');
@@ -778,10 +897,43 @@ const UIModule = {
         payoutInput.placeholder = 'Payout';
         payoutInput.readOnly = true;
         payoutInput.value = bet.payout;
+        payoutCell.appendChild(payoutInput);
+
+        const detectBetType = (value) => {
+            if (/[a-zA-Z]/.test(value)) {
+                return 'Credit';
+            }
+            if (/^\d+$/.test(value)) {
+                return 'Cash';
+            }
+            return null;
+        };
+
+        const applyAmountShorthand = () => {
+            const rawValue = amountInput.value.trim();
+            const parsedValue = parseFloat(rawValue);
+            if (!Number.isFinite(parsedValue)) {
+                return;
+            }
+            if (Number.isInteger(parsedValue) && parsedValue >= 1 && parsedValue <= 10) {
+                const normalizedValue = parsedValue * 1000;
+                amountInput.value = normalizedValue.toString();
+                bet.amount = amountInput.value;
+            }
+        };
 
         const updatePayout = () => {
             const oddsValue = parseFloat(oddsInput.value);
-            const amountValue = parseFloat(amountInput.value);
+            const amountValue = normalizeAmountValue(amountInput.value);
+            const bettingTaxValue = parseFloat(bettingTaxInput.value);
+
+            if (bet.type === 'Credit' && !Number.isFinite(bettingTaxValue)) {
+                bet.payout = '';
+                payoutInput.value = bet.payout;
+                BetModule.persist();
+                return;
+            }
+
             if (Number.isFinite(oddsValue) && Number.isFinite(amountValue)) {
                 const payoutValue = SettlementModule.calculatePayoutAmount(bet, oddsValue, amountValue, true);
                 bet.payout = Number.isFinite(payoutValue) ? payoutValue.toFixed(2) : '';
@@ -791,6 +943,49 @@ const UIModule = {
             payoutInput.value = bet.payout;
             BetModule.persist();
         };
+
+        const applyBetType = (nextType) => {
+            if (!nextType) {
+                return;
+            }
+            bet.type = nextType;
+            typeSelect.value = nextType;
+            typeSelect.classList.toggle('bet-type-cash', bet.type === 'Cash');
+            typeSelect.classList.toggle('bet-type-credit', bet.type === 'Credit');
+
+            if (bet.type === 'Cash') {
+                customerInput.placeholder = 'Card number';
+                customerInput.required = true;
+                customerInput.inputMode = 'numeric';
+                customerInput.pattern = '\\d+';
+                bettingTaxInput.value = '0';
+                bettingTaxInput.disabled = true;
+                bettingTaxInput.required = false;
+                bet.bettingTax = '0';
+            } else {
+                customerInput.placeholder = 'Customer name';
+                customerInput.required = false;
+                customerInput.inputMode = 'text';
+                customerInput.removeAttribute('pattern');
+                bettingTaxInput.disabled = false;
+                bettingTaxInput.required = true;
+            }
+
+            updatePayout();
+        };
+
+        customerInput.addEventListener('input', () => {
+            bet.customer = customerInput.value;
+            const detectedType = detectBetType(customerInput.value.trim());
+            if (detectedType) {
+                applyBetType(detectedType);
+            }
+            BetModule.persist();
+        });
+
+        typeSelect.addEventListener('change', () => {
+            applyBetType(typeSelect.value);
+        });
 
         oddsInput.addEventListener('input', () => {
             bet.odds = oddsInput.value;
@@ -802,11 +997,18 @@ const UIModule = {
             updatePayout();
         });
 
-        updatePayout();
+        amountInput.addEventListener('blur', () => {
+            applyAmountShorthand();
+            updatePayout();
+        });
 
-        oddsCell.appendChild(oddsInput);
-        amountCell.appendChild(amountInput);
-        payoutCell.appendChild(payoutInput);
+        bettingTaxInput.addEventListener('input', () => {
+            bet.bettingTax = bettingTaxInput.value;
+            updatePayout();
+        });
+
+        applyBetType(bet.type || 'Cash');
+        updatePayout();
 
         const actionsCell = document.createElement('td');
         const deleteButton = document.createElement('button');
@@ -824,6 +1026,7 @@ const UIModule = {
         row.appendChild(typeCell);
         row.appendChild(oddsCell);
         row.appendChild(amountCell);
+        row.appendChild(bettingTaxCell);
         row.appendChild(payoutCell);
         row.appendChild(actionsCell);
 
