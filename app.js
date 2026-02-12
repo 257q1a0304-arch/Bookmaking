@@ -289,6 +289,7 @@ const SummaryModule = {
 const UIModule = {
     initialized: false,
     sessionActive: false,
+    horseControlsBound: false,
     handleSessionControls: function () {
         const startBtn = document.getElementById('start-session-btn');
         const restoreBtn = document.getElementById('restore-session-btn');
@@ -356,6 +357,7 @@ const UIModule = {
             BetModule.getBets();
             this.render();
             this.handleRaceControls();
+            this.handleHorseControls();
             this.handleKeyboardNavigation();
             this.handleSettlement();
             this.initialized = true;
@@ -380,6 +382,7 @@ const UIModule = {
         RaceModule.ensureDefaultRace();
         this.renderRaceTabs();
         this.updateRaceDisplays();
+        this.renderHorseList();
         this.renderBetTables();
     },
     renderRaceTabs: function () {
@@ -435,6 +438,7 @@ const UIModule = {
         RaceModule.setCurrentRace(raceId);
         this.updateRaceDisplays();
         this.renderRaceTabs();
+        this.renderHorseList();
         this.renderBetTables();
         this.clearSettlementInputs();
         this.focusFirstBetCell();
@@ -469,6 +473,94 @@ const UIModule = {
                 this.switchRace(nextRaceId);
             });
         }
+    },
+    handleHorseControls: function () {
+        if (this.horseControlsBound) {
+            return;
+        }
+
+        const addHorseBtn = document.getElementById('add-horse-btn');
+        const horseList = document.getElementById('horse-list');
+
+        if (addHorseBtn) {
+            addHorseBtn.addEventListener('click', () => {
+                const currentRaceId = RaceModule.getCurrentRaceId();
+                const horses = HorseModule.getHorsesForRace(currentRaceId);
+                const nextId = horses.length
+                    ? Math.max(...horses.map(horse => Number(horse.id) || 0)) + 1
+                    : 1;
+
+                HorseModule.addHorse({ id: nextId, name: '' });
+                this.renderHorseList();
+                this.renderBetTables();
+            });
+        }
+
+        if (horseList) {
+            horseList.addEventListener('click', (event) => {
+                const target = event.target;
+                if (!(target instanceof HTMLElement)) {
+                    return;
+                }
+                const deleteButton = target.closest('.delete-horse-btn');
+                if (!deleteButton) {
+                    return;
+                }
+                const horseId = Number(deleteButton.dataset.horseId);
+                if (!horseId) {
+                    return;
+                }
+
+                HorseModule.horses = HorseModule.getHorses().filter(horse => horse.id !== horseId);
+                StorageModule.saveData('horses', HorseModule.horses);
+
+                BetModule.bets = BetModule.getBets().filter(bet => bet.horseId !== horseId);
+                StorageModule.saveData('bets', BetModule.bets);
+
+                this.renderHorseList();
+                this.renderBetTables();
+            });
+        }
+
+        this.horseControlsBound = true;
+    },
+    renderHorseList: function () {
+        const container = document.getElementById('horse-list');
+        if (!container) {
+            return;
+        }
+
+        const currentRaceId = RaceModule.getCurrentRaceId();
+        const horses = HorseModule.getHorsesForRace(currentRaceId);
+
+        container.innerHTML = '';
+
+        if (!horses.length) {
+            const emptyState = document.createElement('p');
+            emptyState.className = 'empty-state';
+            emptyState.textContent = 'No horses yet. Click Add Horse to begin.';
+            container.appendChild(emptyState);
+            return;
+        }
+
+        horses.forEach(horse => {
+            const item = document.createElement('div');
+            item.className = 'horse-item';
+
+            const label = document.createElement('span');
+            label.className = 'horse-number';
+            label.textContent = horse.name ? `#${horse.id} - ${horse.name}` : `#${horse.id}`;
+
+            const deleteButton = document.createElement('button');
+            deleteButton.type = 'button';
+            deleteButton.className = 'delete-horse-btn';
+            deleteButton.textContent = 'Delete';
+            deleteButton.dataset.horseId = horse.id;
+
+            item.appendChild(label);
+            item.appendChild(deleteButton);
+            container.appendChild(item);
+        });
     },
     renderBetTables: function () {
         const container = document.getElementById('bet-entry-sections');
@@ -517,6 +609,7 @@ const UIModule = {
         nameInput.addEventListener('input', (event) => {
             event.stopPropagation();
             HorseModule.updateHorseName(horse.id, nameInput.value);
+            this.renderHorseList();
         });
         nameInput.addEventListener('click', event => event.stopPropagation());
 
