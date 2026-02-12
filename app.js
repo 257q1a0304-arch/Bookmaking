@@ -287,6 +287,95 @@ const SummaryModule = {
 
 // UI Module
 const UIModule = {
+    initialized: false,
+    sessionActive: false,
+    handleSessionControls: function () {
+        const startBtn = document.getElementById('start-session-btn');
+        const restoreBtn = document.getElementById('restore-session-btn');
+
+        if (startBtn) {
+            startBtn.addEventListener('click', () => {
+                this.startSessionFromInputs();
+            });
+        }
+
+        if (restoreBtn) {
+            restoreBtn.addEventListener('click', () => {
+                this.restoreSession();
+            });
+        }
+    },
+    startSessionFromInputs: function () {
+        if (this.sessionActive) {
+            return;
+        }
+
+        const location = document.getElementById('location-input')?.value?.trim() || '';
+        const date = document.getElementById('date-input')?.value || '';
+        const existingSession = SessionModule.getSessionData();
+
+        if (!existingSession) {
+            SessionModule.startSession('user123');
+        }
+
+        StorageModule.saveData('sessionMeta', { location, date });
+        this.sessionActive = true;
+        this.enterMainUI({ location, date });
+    },
+    restoreSession: function () {
+        if (this.sessionActive) {
+            return;
+        }
+
+        const storedSession = SessionModule.getSessionData();
+        if (!storedSession) {
+            return;
+        }
+
+        const sessionMeta = StorageModule.loadData('sessionMeta') || {};
+        this.sessionActive = true;
+        this.enterMainUI(sessionMeta);
+    },
+    enterMainUI: function (sessionMeta) {
+        this.updateSessionDisplay(sessionMeta);
+
+        const sessionScreen = document.getElementById('session-screen');
+        const mainScreen = document.getElementById('main-screen');
+
+        if (sessionScreen) {
+            sessionScreen.classList.remove('active');
+        }
+        if (mainScreen) {
+            mainScreen.classList.add('active');
+        }
+
+        if (!this.initialized) {
+            RaceModule.getRaces();
+            RaceModule.getCurrentRaceId();
+            HorseModule.getHorses();
+            BetModule.getBets();
+            this.render();
+            this.handleRaceControls();
+            this.handleKeyboardNavigation();
+            this.handleSettlement();
+            this.initialized = true;
+        } else {
+            this.render();
+        }
+
+        this.focusFirstBetCell();
+    },
+    updateSessionDisplay: function ({ location = '', date = '' } = {}) {
+        const locationDisplay = document.getElementById('display-location');
+        const dateDisplay = document.getElementById('display-date');
+
+        if (locationDisplay) {
+            locationDisplay.textContent = location;
+        }
+        if (dateDisplay) {
+            dateDisplay.textContent = date;
+        }
+    },
     render: function () {
         RaceModule.ensureDefaultRace();
         this.renderRaceTabs();
@@ -789,16 +878,7 @@ const UIModule = {
 
 // Initializing the application
 document.addEventListener('DOMContentLoaded', function () {
-    SessionModule.startSession('user123');
-    RaceModule.getRaces();
-    RaceModule.getCurrentRaceId();
-    HorseModule.getHorses();
-    BetModule.getBets();
-    UIModule.render();
-    UIModule.handleRaceControls();
-    UIModule.handleKeyboardNavigation();
-    UIModule.handleSettlement();
-    UIModule.focusFirstBetCell();
+    UIModule.handleSessionControls();
 });
 
 
