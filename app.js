@@ -290,6 +290,7 @@ const UIModule = {
     initialized: false,
     sessionActive: false,
     horseControlsBound: false,
+    betControlsBound: false,
     handleSessionControls: function () {
         const startBtn = document.getElementById('start-session-btn');
         const restoreBtn = document.getElementById('restore-session-btn');
@@ -358,6 +359,7 @@ const UIModule = {
             this.render();
             this.handleRaceControls();
             this.handleHorseControls();
+            this.handleBetControls();
             this.handleKeyboardNavigation();
             this.handleSettlement();
             this.initialized = true;
@@ -524,6 +526,36 @@ const UIModule = {
 
         this.horseControlsBound = true;
     },
+    handleBetControls: function () {
+        if (this.betControlsBound) {
+            return;
+        }
+
+        const container = document.getElementById('bet-entry-sections');
+        if (container) {
+            container.addEventListener('click', (event) => {
+                const target = event.target;
+                if (!(target instanceof HTMLElement)) {
+                    return;
+                }
+
+                const addButton = target.closest('.add-bet-btn');
+                if (!addButton) {
+                    return;
+                }
+
+                const horseId = Number(addButton.dataset.horse);
+                const tableType = addButton.dataset.type;
+                if (!horseId || (tableType !== 'win' && tableType !== 'place')) {
+                    return;
+                }
+
+                this.addBetRow(horseId, tableType);
+            });
+        }
+
+        this.betControlsBound = true;
+    },
     renderHorseList: function () {
         const container = document.getElementById('horse-list');
         if (!container) {
@@ -681,6 +713,14 @@ const UIModule = {
         tableWrapper.appendChild(table);
         wrapper.appendChild(tableWrapper);
 
+        const addButton = document.createElement('button');
+        addButton.type = 'button';
+        addButton.className = 'add-bet-btn';
+        addButton.dataset.horse = horse.id;
+        addButton.dataset.type = category;
+        addButton.textContent = category === 'win' ? '+ Add Win Bet' : '+ Add Place Bet';
+        wrapper.appendChild(addButton);
+
         return wrapper;
     },
     createBetRow: function (bet) {
@@ -811,21 +851,40 @@ const UIModule = {
             }
         }
     },
-    addBetRowForTable: function (table) {
+    addBetRow: function (horseId, tableType) {
+        const table = document.querySelector(`table[data-horse-id="${horseId}"][data-bet-category="${tableType}"]`);
         if (!table) {
             return null;
         }
+
         const tbody = table.querySelector('tbody');
         if (!tbody) {
             return null;
         }
-        const horseId = parseInt(table.dataset.horseId, 10);
-        const category = table.dataset.betCategory;
-        const newBet = BetModule.createEmptyBet(horseId, category);
+
+        const newBet = BetModule.createEmptyBet(horseId, tableType);
         BetModule.addBet(newBet);
+
         const newRow = this.createBetRow(newBet);
         tbody.appendChild(newRow);
+
+        const firstCellInput = newRow.querySelector('input, select, button');
+        if (firstCellInput) {
+            firstCellInput.focus();
+            if (typeof firstCellInput.select === 'function') {
+                firstCellInput.select();
+            }
+        }
+
         return newRow;
+    },
+    addBetRowForTable: function (table) {
+        if (!table) {
+            return null;
+        }
+        const horseId = parseInt(table.dataset.horseId, 10);
+        const category = table.dataset.betCategory;
+        return this.addBetRow(horseId, category);
     },
     handleKeyboardNavigation: function () {
         const container = document.getElementById('bet-entry-sections');
@@ -880,16 +939,9 @@ const UIModule = {
             if (event.key === 'Enter') {
                 event.preventDefault();
                 if (cellIndex === lastCellIndex) {
-                    const newRow = this.addBetRowForTable(table);
-                    if (newRow) {
-                        const firstCellInput = newRow.querySelector('input, select, button');
-                        if (firstCellInput) {
-                            firstCellInput.focus();
-                            if (typeof firstCellInput.select === 'function') {
-                                firstCellInput.select();
-                            }
-                        }
-                    }
+                    const horseId = parseInt(table.dataset.horseId, 10);
+                    const category = table.dataset.betCategory;
+                    this.addBetRow(horseId, category);
                 } else {
                     focusCell(rowIndex, cellIndex + 1);
                 }
