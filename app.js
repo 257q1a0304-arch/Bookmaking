@@ -44,12 +44,24 @@ const SessionModule = {
 // Race Module
 const RaceModule = {
     races: [],
+    currentRaceId: 1,
     addRace: function (race) {
         this.races.push(race);
         StorageModule.saveData('races', this.races);
+        if (!this.currentRaceId && race && race.id) {
+            this.currentRaceId = race.id;
+            StorageModule.saveData('currentRaceId', this.currentRaceId);
+        }
     },
     getRaces: function () {
         return StorageModule.loadData('races') || this.races;
+    },
+    setCurrentRace: function (raceId) {
+        this.currentRaceId = raceId;
+        StorageModule.saveData('currentRaceId', this.currentRaceId);
+    },
+    getCurrentRaceId: function () {
+        return StorageModule.loadData('currentRaceId') || this.currentRaceId;
     }
 };
 
@@ -60,15 +72,25 @@ const HorseModule = {
         this.horses.push(horse);
         StorageModule.saveData('horses', this.horses);
     },
+    updateHorseName: function (horseId, name) {
+        const horse = this.horses.find(item => item.id === horseId);
+        if (horse) {
+            horse.name = name;
+            StorageModule.saveData('horses', this.horses);
+        }
+    },
     getHorses: function () {
         return StorageModule.loadData('horses') || this.horses;
+    },
+    getHorsesForRace: function (raceId) {
+        return this.getHorses().filter(horse => horse.raceId === raceId || horse.raceId === undefined || horse.raceId === null);
     }
 };
 
 // Bet Module
 const BetModule = {
     bets: [],
-    placeBet: function (bet) {
+    addBet: function (bet) {
         this.bets.push(bet);
         StorageModule.saveData('bets', this.bets);
     },
@@ -76,12 +98,20 @@ const BetModule = {
         this.bets = this.bets.filter(bet => bet.id !== betId);
         StorageModule.saveData('bets', this.bets);
     },
+    persist: function () {
+        StorageModule.saveData('bets', this.bets);
+    },
     getBets: function () {
         return StorageModule.loadData('bets') || this.bets;
     },
-    createEmptyBet: function () {
+    getBetsForHorseCategory: function (horseId, category) {
+        return this.getBets().filter(bet => bet.horseId === horseId && bet.category === category);
+    },
+    createEmptyBet: function (horseId, category) {
         return {
             id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            horseId: horseId,
+            category: category,
             customer: '',
             type: 'Cash',
             odds: '',
@@ -108,9 +138,27 @@ const CalculationModule = {
 
 // Settlement Module
 const SettlementModule = {
-    settleBets: function (bets) {
-        bets.forEach(bet => {
-            // Logic to settle bets (e.g., check results, calculate winnings)
+    isWinningBet: function (bet, results) {
+        if (!results) {
+            return false;
+        }
+        if (bet.category === 'win') {
+            return bet.horseId === results.first;
+        }
+        if (bet.category === 'place') {
+            return [results.first, results.second, results.third].includes(bet.horseId);
+        }
+        return false;
+    },
+    settleBets: function (bets, results) {
+        return bets.map(bet => {
+            const isWinner = this.isWinningBet(bet, results);
+            return {
+                ...bet,
+                settled: true,
+                isWinner: isWinner,
+                payout: isWinner ? bet.payout : '0.00'
+            };
         });
     }
 };
@@ -130,22 +178,127 @@ const SummaryModule = {
 // UI Module
 const UIModule = {
     render: function () {
-        this.renderBetTable();
+        this.renderBetTables();
     },
-    renderBetTable: function () {
-        const tbody = document.getElementById('bet-tbody');
-        if (!tbody) {
+    renderBetTables: function () {
+        const container = document.getElementById('bet-entry-sections');
+        if (!container) {
             return;
         }
 
-        if (!BetModule.bets.length) {
-            BetModule.bets.push(BetModule.createEmptyBet());
+        const currentRaceId = RaceModule.getCurrentRaceId();
+        const horses = HorseModule.getHorsesForRace(currentRaceId);
+
+        container.innerHTML = '';
+
+        if (!horses.length) {
+            const emptyState = document.createElement('p');
+            emptyState.className = 'empty-state';
+            emptyState.textContent = 'Add horses to start entering bets.';
+            container.appendChild(emptyState);
+            return;
         }
 
-        tbody.innerHTML = '';
-        BetModule.bets.forEach(bet => {
+        horses.forEach(horse => {
+            container.appendChild(this.createHorseBetSection(horse));
+        });
+
+        this.focusFirstBetCell();
+    },
+    createHorseBetSection: function (horse) {
+        const section = document.createElement('div');
+        section.className = 'horse-bet-section';
+        section.dataset.horseId = horse.id;
+
+        const header = document.createElement('button');
+        header.type = 'button';
+        header.className = 'horse-bet-header';
+        header.setAttribute('aria-expanded', 'true');
+
+        const title = document.createElement('div');
+        title.className = 'horse-bet-title';
+        title.textContent = `Horse #${horse.id}`;
+
+        const nameInput = document.createElement('input');
+        nameInput.type = 'text';
+        nameInput.className = 'horse-name-input';
+        nameInput.placeholder = 'Optional horse name';
+        nameInput.value = horse.name || '';
+        nameInput.addEventListener('input', (event) => {
+            event.stopPropagation();
+            HorseModule.updateHorseName(horse.id, nameInput.value);
+        });
+        nameInput.addEventListener('click', event => event.stopPropagation());
+
+        const indicator = document.createElement('span');
+        indicator.className = 'horse-accordion-indicator';
+        indicator.textContent = '▾';
+
+        header.appendChild(title);
+        header.appendChild(nameInput);
+        header.appendChild(indicator);
+
+        const content = document.createElement('div');
+        content.className = 'horse-bet-content';
+
+        content.appendChild(this.createBetTableSection(horse, 'win', 'Win Bets'));
+        content.appendChild(this.createBetTableSection(horse, 'place', 'Place Bets'));
+
+        header.addEventListener('click', () => {
+            const isExpanded = header.getAttribute('aria-expanded') === 'true';
+            header.setAttribute('aria-expanded', String(!isExpanded));
+            section.classList.toggle('collapsed', isExpanded);
+        });
+
+        section.appendChild(header);
+        section.appendChild(content);
+
+        return section;
+    },
+    createBetTableSection: function (horse, category, label) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'horse-bet-table';
+
+        const heading = document.createElement('h4');
+        heading.className = 'bet-table-title';
+        heading.textContent = label;
+        wrapper.appendChild(heading);
+
+        const tableWrapper = document.createElement('div');
+        tableWrapper.className = 'table-wrapper';
+
+        const table = document.createElement('table');
+        table.className = 'bet-table';
+        table.dataset.horseId = horse.id;
+        table.dataset.betCategory = category;
+
+        const thead = document.createElement('thead');
+        const headerRow = document.createElement('tr');
+        ['Customer', 'Type', 'Odds', 'Amount', 'Payout', 'Actions'].forEach(title => {
+            const th = document.createElement('th');
+            th.textContent = title;
+            headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        let bets = BetModule.getBetsForHorseCategory(horse.id, category);
+        if (!bets.length) {
+            const newBet = BetModule.createEmptyBet(horse.id, category);
+            BetModule.addBet(newBet);
+            bets = [newBet];
+        }
+
+        bets.forEach(bet => {
             tbody.appendChild(this.createBetRow(bet));
         });
+
+        table.appendChild(tbody);
+        tableWrapper.appendChild(table);
+        wrapper.appendChild(tableWrapper);
+
+        return wrapper;
     },
     createBetRow: function (bet) {
         const row = document.createElement('tr');
@@ -158,6 +311,7 @@ const UIModule = {
         customerInput.value = bet.customer;
         customerInput.addEventListener('input', () => {
             bet.customer = customerInput.value;
+            BetModule.persist();
         });
         customerCell.appendChild(customerInput);
 
@@ -174,6 +328,7 @@ const UIModule = {
             bet.type = typeSelect.value;
             typeSelect.classList.toggle('bet-type-cash', bet.type === 'Cash');
             typeSelect.classList.toggle('bet-type-credit', bet.type === 'Credit');
+            BetModule.persist();
         });
         typeSelect.dispatchEvent(new Event('change'));
         typeCell.appendChild(typeSelect);
@@ -211,6 +366,7 @@ const UIModule = {
                 bet.payout = '';
             }
             payoutInput.value = bet.payout;
+            BetModule.persist();
         };
 
         oddsInput.addEventListener('input', () => {
@@ -236,8 +392,8 @@ const UIModule = {
         deleteButton.textContent = 'Delete';
         deleteButton.addEventListener('click', () => {
             BetModule.removeBet(bet.id);
-            this.renderBetTable();
-            this.focusFirstBetCell();
+            this.renderBetTables();
+            this.focusTableFirstCell(bet.horseId, bet.category);
         });
         actionsCell.appendChild(deleteButton);
 
@@ -251,7 +407,7 @@ const UIModule = {
         return row;
     },
     focusFirstBetCell: function () {
-        const firstInput = document.querySelector('#bet-tbody tr td input, #bet-tbody tr td select');
+        const firstInput = document.querySelector('#bet-entry-sections table tbody tr td input, #bet-entry-sections table tbody tr td select');
         if (firstInput) {
             firstInput.focus();
             if (typeof firstInput.select === 'function') {
@@ -259,26 +415,49 @@ const UIModule = {
             }
         }
     },
-    addBetRow: function () {
-        const tbody = document.getElementById('bet-tbody');
+    focusTableFirstCell: function (horseId, category) {
+        const table = document.querySelector(`table[data-horse-id="${horseId}"][data-bet-category="${category}"]`);
+        if (!table) {
+            return;
+        }
+        const firstInput = table.querySelector('tbody tr td input, tbody tr td select');
+        if (firstInput) {
+            firstInput.focus();
+            if (typeof firstInput.select === 'function') {
+                firstInput.select();
+            }
+        }
+    },
+    addBetRowForTable: function (table) {
+        if (!table) {
+            return null;
+        }
+        const tbody = table.querySelector('tbody');
         if (!tbody) {
             return null;
         }
-        const newBet = BetModule.createEmptyBet();
-        BetModule.bets.push(newBet);
+        const horseId = parseInt(table.dataset.horseId, 10);
+        const category = table.dataset.betCategory;
+        const newBet = BetModule.createEmptyBet(horseId, category);
+        BetModule.addBet(newBet);
         const newRow = this.createBetRow(newBet);
         tbody.appendChild(newRow);
         return newRow;
     },
     handleKeyboardNavigation: function () {
-        const table = document.getElementById('bet-table');
-        if (!table) {
+        const container = document.getElementById('bet-entry-sections');
+        if (!container) {
             return;
         }
 
-        table.addEventListener('keydown', (event) => {
+        container.addEventListener('keydown', (event) => {
             const target = event.target;
             if (!(target instanceof HTMLElement)) {
+                return;
+            }
+
+            const table = target.closest('table[data-bet-category]');
+            if (!table) {
                 return;
             }
 
@@ -318,7 +497,7 @@ const UIModule = {
             if (event.key === 'Enter') {
                 event.preventDefault();
                 if (cellIndex === lastCellIndex) {
-                    const newRow = this.addBetRow();
+                    const newRow = this.addBetRowForTable(table);
                     if (newRow) {
                         const firstCellInput = newRow.querySelector('input, select, button');
                         if (firstCellInput) {
@@ -357,18 +536,54 @@ const UIModule = {
                 focusCell(Math.max(rowIndex - 1, 0), cellIndex);
             }
         });
+    },
+    handleSettlement: function () {
+        const settleBtn = document.getElementById('settle-race-btn');
+        if (!settleBtn) {
+            return;
+        }
+
+        settleBtn.addEventListener('click', () => {
+            const results = {
+                first: parseInt(document.getElementById('first-place')?.value, 10),
+                second: parseInt(document.getElementById('second-place')?.value, 10),
+                third: parseInt(document.getElementById('third-place')?.value, 10)
+            };
+
+            const bets = BetModule.getBets();
+            const settledBets = SettlementModule.settleBets(bets, results);
+            const resultsContainer = document.getElementById('settlement-results');
+            if (!resultsContainer) {
+                return;
+            }
+
+            resultsContainer.innerHTML = '';
+            settledBets.forEach(bet => {
+                const item = document.createElement('div');
+                item.className = 'ledger-item';
+                const label = document.createElement('span');
+                label.className = 'ledger-customer';
+                label.textContent = `${bet.category.toUpperCase()} - Horse #${bet.horseId} - ${bet.customer || 'Anonymous'}`;
+                const amount = document.createElement('span');
+                amount.className = `ledger-amount ${bet.isWinner ? 'positive' : 'negative'}`;
+                amount.textContent = bet.isWinner ? `+${bet.payout}` : '0.00';
+                item.appendChild(label);
+                item.appendChild(amount);
+                resultsContainer.appendChild(item);
+            });
+        });
     }
 };
 
 // Initializing the application
 document.addEventListener('DOMContentLoaded', function () {
     SessionModule.startSession('user123');
+    RaceModule.races = RaceModule.getRaces();
+    HorseModule.horses = HorseModule.getHorses();
+    BetModule.bets = BetModule.getBets();
     UIModule.render();
     UIModule.handleKeyboardNavigation();
-    // Load existing data
-    RaceModule.getRaces();
-    HorseModule.getHorses();
-    BetModule.getBets();
+    UIModule.handleSettlement();
     UIModule.focusFirstBetCell();
 });
 
