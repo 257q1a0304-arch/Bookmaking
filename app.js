@@ -46,12 +46,25 @@ const RaceModule = {
     races: [],
     currentRaceId: 1,
     addRace: function (race) {
-        this.races.push(race);
+        const nextId = this.getNextRaceId();
+        const newRace = {
+            id: race?.id ?? nextId,
+            name: race?.name ?? `Race ${nextId}`,
+            ended: Boolean(race?.ended)
+        };
+        this.races.push(newRace);
         StorageModule.saveData('races', this.races);
-        if (!this.currentRaceId && race && race.id) {
-            this.currentRaceId = race.id;
+        if (!this.currentRaceId && newRace.id) {
+            this.currentRaceId = newRace.id;
             StorageModule.saveData('currentRaceId', this.currentRaceId);
         }
+        return newRace;
+    },
+    getNextRaceId: function () {
+        if (!this.races.length) {
+            return 1;
+        }
+        return Math.max(...this.races.map(race => Number(race.id) || 0)) + 1;
     },
     getRaces: function () {
         const stored = StorageModule.loadData('races');
@@ -59,6 +72,16 @@ const RaceModule = {
             this.races = stored;
         }
         return this.races;
+    },
+    ensureDefaultRace: function () {
+        this.getRaces();
+        if (!this.races.length) {
+            this.addRace({ id: 1, name: 'Race 1', ended: false });
+        }
+        if (!this.currentRaceId) {
+            this.setCurrentRace(this.races[0].id);
+        }
+        return this.currentRaceId;
     },
     setCurrentRace: function (raceId) {
         this.currentRaceId = raceId;
@@ -68,6 +91,20 @@ const RaceModule = {
         const stored = StorageModule.loadData('currentRaceId');
         if (stored !== null && stored !== undefined && !Number.isNaN(Number(stored))) {
             this.currentRaceId = Number(stored);
+        }
+        return this.currentRaceId;
+    },
+    endRace: function (raceId) {
+        this.races = this.races.map(race => (race.id === raceId ? { ...race, ended: true } : race));
+        StorageModule.saveData('races', this.races);
+    },
+    deleteRace: function (raceId) {
+        this.races = this.races.filter(race => race.id !== raceId);
+        StorageModule.saveData('races', this.races);
+        if (this.currentRaceId === raceId) {
+            const fallback = this.races[0]?.id ?? null;
+            this.currentRaceId = fallback;
+            StorageModule.saveData('currentRaceId', this.currentRaceId);
         }
         return this.currentRaceId;
     }
@@ -114,6 +151,10 @@ const HorseModule = {
             StorageModule.saveData('horses', normalized);
         }
         return normalized.filter(horse => horse.raceId === raceId);
+    },
+    removeHorsesForRace: function (raceId) {
+        this.horses = this.getHorses().filter(horse => horse.raceId !== raceId);
+        StorageModule.saveData('horses', this.horses);
     }
 };
 
@@ -166,6 +207,10 @@ const BetModule = {
             amount: '',
             payout: ''
         };
+    },
+    removeBetsForRace: function (raceId) {
+        this.bets = this.getBets().filter(bet => bet.raceId !== raceId);
+        StorageModule.saveData('bets', this.bets);
     }
 };
 
@@ -242,7 +287,98 @@ const SummaryModule = {
 // UI Module
 const UIModule = {
     render: function () {
+        RaceModule.ensureDefaultRace();
+        this.renderRaceTabs();
+        this.updateRaceDisplays();
         this.renderBetTables();
+    },
+    renderRaceTabs: function () {
+        const tabs = document.getElementById('race-tabs');
+        if (!tabs) {
+            return;
+        }
+        const currentRaceId = RaceModule.getCurrentRaceId();
+        const races = RaceModule.getRaces();
+        tabs.innerHTML = '';
+        races.forEach(race => {
+            const tab = document.createElement('button');
+            tab.type = 'button';
+            tab.className = 'race-tab';
+            if (race.id === currentRaceId) {
+                tab.classList.add('active');
+            }
+            if (race.ended) {
+                tab.classList.add('ended');
+            }
+            tab.textContent = race.name || `Race ${race.id}`;
+            tab.dataset.raceId = race.id;
+            tab.addEventListener('click', () => {
+                this.switchRace(race.id);
+            });
+            tabs.appendChild(tab);
+        });
+    },
+    updateRaceDisplays: function () {
+        const currentRaceId = RaceModule.getCurrentRaceId();
+        const labels = ['current-race-number', 'bet-race-number', 'settlement-race-number'];
+        labels.forEach(id => {
+            const label = document.getElementById(id);
+            if (label) {
+                label.textContent = currentRaceId;
+            }
+        });
+    },
+    clearSettlementInputs: function () {
+        const fields = ['first-place', 'second-place', 'third-place'];
+        fields.forEach(id => {
+            const input = document.getElementById(id);
+            if (input) {
+                input.value = '';
+            }
+        });
+        const resultsContainer = document.getElementById('settlement-results');
+        if (resultsContainer) {
+            resultsContainer.innerHTML = '';
+        }
+    },
+    switchRace: function (raceId) {
+        RaceModule.setCurrentRace(raceId);
+        this.updateRaceDisplays();
+        this.renderRaceTabs();
+        this.renderBetTables();
+        this.clearSettlementInputs();
+        this.focusFirstBetCell();
+    },
+    handleRaceControls: function () {
+        const addRaceBtn = document.getElementById('add-race-btn');
+        const endRaceBtn = document.getElementById('end-race-btn');
+        const deleteRaceBtn = document.getElementById('delete-race-btn');
+
+        if (addRaceBtn) {
+            addRaceBtn.addEventListener('click', () => {
+                const race = RaceModule.addRace({});
+                this.switchRace(race.id);
+            });
+        }
+
+        if (endRaceBtn) {
+            endRaceBtn.addEventListener('click', () => {
+                const currentRaceId = RaceModule.getCurrentRaceId();
+                RaceModule.endRace(currentRaceId);
+                this.renderRaceTabs();
+            });
+        }
+
+        if (deleteRaceBtn) {
+            deleteRaceBtn.addEventListener('click', () => {
+                const currentRaceId = RaceModule.getCurrentRaceId();
+                HorseModule.removeHorsesForRace(currentRaceId);
+                BetModule.removeBetsForRace(currentRaceId);
+                RaceModule.deleteRace(currentRaceId);
+                const nextRaceId = RaceModule.ensureDefaultRace();
+                this.switchRace(nextRaceId);
+            });
+        }
     },
     renderBetTables: function () {
         const container = document.getElementById('bet-entry-sections');
@@ -480,7 +616,7 @@ const UIModule = {
         }
     },
     focusTableFirstCell: function (horseId, category) {
-        const table = document.querySelector(`table[data-horse-id=\"${horseId}\"][data-bet-category=\"${category}\"]`);
+        const table = document.querySelector(`table[data-horse-id="${horseId}"][data-bet-category="${category}"]`);
         if (!table) {
             return;
         }
@@ -647,9 +783,11 @@ const UIModule = {
 document.addEventListener('DOMContentLoaded', function () {
     SessionModule.startSession('user123');
     RaceModule.getRaces();
+    RaceModule.getCurrentRaceId();
     HorseModule.getHorses();
     BetModule.getBets();
     UIModule.render();
+    UIModule.handleRaceControls();
     UIModule.handleKeyboardNavigation();
     UIModule.handleSettlement();
     UIModule.focusFirstBetCell();
