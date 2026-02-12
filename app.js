@@ -54,14 +54,22 @@ const RaceModule = {
         }
     },
     getRaces: function () {
-        return StorageModule.loadData('races') || this.races;
+        const stored = StorageModule.loadData('races');
+        if (stored) {
+            this.races = stored;
+        }
+        return this.races;
     },
     setCurrentRace: function (raceId) {
         this.currentRaceId = raceId;
         StorageModule.saveData('currentRaceId', this.currentRaceId);
     },
     getCurrentRaceId: function () {
-        return StorageModule.loadData('currentRaceId') || this.currentRaceId;
+        const stored = StorageModule.loadData('currentRaceId');
+        if (stored !== null && stored !== undefined && !Number.isNaN(Number(stored))) {
+            this.currentRaceId = Number(stored);
+        }
+        return this.currentRaceId;
     }
 };
 
@@ -69,7 +77,12 @@ const RaceModule = {
 const HorseModule = {
     horses: [],
     addHorse: function (horse) {
-        this.horses.push(horse);
+        const currentRaceId = RaceModule.getCurrentRaceId();
+        const normalizedHorse = {
+            ...horse,
+            raceId: horse.raceId ?? currentRaceId
+        };
+        this.horses.push(normalizedHorse);
         StorageModule.saveData('horses', this.horses);
     },
     updateHorseName: function (horseId, name) {
@@ -80,10 +93,27 @@ const HorseModule = {
         }
     },
     getHorses: function () {
-        return StorageModule.loadData('horses') || this.horses;
+        const stored = StorageModule.loadData('horses');
+        if (stored) {
+            this.horses = stored;
+        }
+        return this.horses;
     },
     getHorsesForRace: function (raceId) {
-        return this.getHorses().filter(horse => horse.raceId === raceId || horse.raceId === undefined || horse.raceId === null);
+        const horses = this.getHorses();
+        let needsSave = false;
+        const normalized = horses.map(horse => {
+            if (horse.raceId === undefined || horse.raceId === null) {
+                needsSave = true;
+                return { ...horse, raceId: raceId };
+            }
+            return horse;
+        });
+        if (needsSave) {
+            this.horses = normalized;
+            StorageModule.saveData('horses', normalized);
+        }
+        return normalized.filter(horse => horse.raceId === raceId);
     }
 };
 
@@ -102,16 +132,34 @@ const BetModule = {
         StorageModule.saveData('bets', this.bets);
     },
     getBets: function () {
-        return StorageModule.loadData('bets') || this.bets;
+        const stored = StorageModule.loadData('bets');
+        if (stored) {
+            this.bets = stored;
+        }
+        const currentRaceId = RaceModule.getCurrentRaceId();
+        let needsSave = false;
+        this.bets = this.bets.map(bet => {
+            if (bet.raceId === undefined || bet.raceId === null) {
+                needsSave = true;
+                return { ...bet, raceId: currentRaceId };
+            }
+            return bet;
+        });
+        if (needsSave) {
+            StorageModule.saveData('bets', this.bets);
+        }
+        return this.bets;
     },
     getBetsForHorseCategory: function (horseId, category) {
-        return this.getBets().filter(bet => bet.horseId === horseId && bet.category === category);
+        const currentRaceId = RaceModule.getCurrentRaceId();
+        return this.getBets().filter(bet => bet.horseId === horseId && bet.category === category && bet.raceId === currentRaceId);
     },
     createEmptyBet: function (horseId, category) {
         return {
             id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
             horseId: horseId,
             category: category,
+            raceId: RaceModule.getCurrentRaceId(),
             customer: '',
             type: 'Cash',
             odds: '',
@@ -132,7 +180,7 @@ const TaxModule = {
 // Calculation Module
 const CalculationModule = {
     calculateTotal: function (bets) {
-        return bets.reduce((total, bet) => total + bet.amount, 0);
+        return bets.reduce((total, bet) => total + (parseFloat(bet.amount) || 0), 0);
     }
 };
 
@@ -150,14 +198,30 @@ const SettlementModule = {
         }
         return false;
     },
+    calculatePayoutAmount: function (bet, oddsValue, amountValue, isWinner) {
+        if (!Number.isFinite(oddsValue) || !Number.isFinite(amountValue)) {
+            return 0;
+        }
+        const tax = TaxModule.calculateTax(amountValue);
+        if (bet.type === 'Cash') {
+            return isWinner ? (oddsValue * amountValue) + amountValue : 0;
+        }
+        if (bet.type === 'Credit') {
+            return isWinner ? (oddsValue * amountValue) - tax : amountValue + tax;
+        }
+        return 0;
+    },
     settleBets: function (bets, results) {
         return bets.map(bet => {
             const isWinner = this.isWinningBet(bet, results);
+            const oddsValue = parseFloat(bet.odds);
+            const amountValue = parseFloat(bet.amount);
+            const payoutValue = this.calculatePayoutAmount(bet, oddsValue, amountValue, isWinner);
             return {
                 ...bet,
                 settled: true,
                 isWinner: isWinner,
-                payout: isWinner ? bet.payout : '0.00'
+                payout: Number.isFinite(payoutValue) ? payoutValue.toFixed(2) : '0.00'
             };
         });
     }
@@ -328,7 +392,7 @@ const UIModule = {
             bet.type = typeSelect.value;
             typeSelect.classList.toggle('bet-type-cash', bet.type === 'Cash');
             typeSelect.classList.toggle('bet-type-credit', bet.type === 'Credit');
-            BetModule.persist();
+            updatePayout();
         });
         typeSelect.dispatchEvent(new Event('change'));
         typeCell.appendChild(typeSelect);
@@ -360,8 +424,8 @@ const UIModule = {
             const oddsValue = parseFloat(oddsInput.value);
             const amountValue = parseFloat(amountInput.value);
             if (Number.isFinite(oddsValue) && Number.isFinite(amountValue)) {
-                const payout = oddsValue * amountValue;
-                bet.payout = payout.toFixed(2);
+                const payoutValue = SettlementModule.calculatePayoutAmount(bet, oddsValue, amountValue, true);
+                bet.payout = Number.isFinite(payoutValue) ? payoutValue.toFixed(2) : '';
             } else {
                 bet.payout = '';
             }
@@ -416,7 +480,7 @@ const UIModule = {
         }
     },
     focusTableFirstCell: function (horseId, category) {
-        const table = document.querySelector(`table[data-horse-id="${horseId}"][data-bet-category="${category}"]`);
+        const table = document.querySelector(`table[data-horse-id=\"${horseId}\"][data-bet-category=\"${category}\"]`);
         if (!table) {
             return;
         }
@@ -552,6 +616,9 @@ const UIModule = {
 
             const bets = BetModule.getBets();
             const settledBets = SettlementModule.settleBets(bets, results);
+            BetModule.bets = settledBets;
+            BetModule.persist();
+
             const resultsContainer = document.getElementById('settlement-results');
             if (!resultsContainer) {
                 return;
@@ -566,7 +633,8 @@ const UIModule = {
                 label.textContent = `${bet.category.toUpperCase()} - Horse #${bet.horseId} - ${bet.customer || 'Anonymous'}`;
                 const amount = document.createElement('span');
                 amount.className = `ledger-amount ${bet.isWinner ? 'positive' : 'negative'}`;
-                amount.textContent = bet.isWinner ? `+${bet.payout}` : '0.00';
+                const payoutValue = parseFloat(bet.payout) || 0;
+                amount.textContent = bet.isWinner ? `+${bet.payout}` : `-${payoutValue.toFixed(2)}`;
                 item.appendChild(label);
                 item.appendChild(amount);
                 resultsContainer.appendChild(item);
@@ -578,9 +646,9 @@ const UIModule = {
 // Initializing the application
 document.addEventListener('DOMContentLoaded', function () {
     SessionModule.startSession('user123');
-    RaceModule.races = RaceModule.getRaces();
-    HorseModule.horses = HorseModule.getHorses();
-    BetModule.bets = BetModule.getBets();
+    RaceModule.getRaces();
+    HorseModule.getHorses();
+    BetModule.getBets();
     UIModule.render();
     UIModule.handleKeyboardNavigation();
     UIModule.handleSettlement();
