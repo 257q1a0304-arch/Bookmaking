@@ -187,7 +187,7 @@ const BetModule = {
                 needsSave = true;
             }
             if (updatedBet.bettingTax === undefined || updatedBet.bettingTax === null) {
-                updatedBet = { ...updatedBet, bettingTax: '' };
+                updatedBet = { ...updatedBet, bettingTax: ''; }
                 needsSave = true;
             }
             return updatedBet;
@@ -224,7 +224,7 @@ const BetModule = {
 // Tax Module
 const TaxModule = {
     calculateTax: function (amount) {
-        const taxRate = 0.15; // Example tax rate
+        const taxRate = 0.15;
         return amount * taxRate;
     }
 };
@@ -266,16 +266,17 @@ const SettlementModule = {
         if (!Number.isFinite(oddsValue) || !Number.isFinite(normalizedAmount)) {
             return 0;
         }
-        if (!isWinner) {
-            return 0;
-        }
         if (bet.type === 'Cash') {
-            return (oddsValue * normalizedAmount) + normalizedAmount;
+            return isWinner ? (oddsValue * normalizedAmount) + normalizedAmount : 0;
         }
         if (bet.type === 'Credit') {
-            const bettingTaxValue = parseFloat(bet.bettingTax);
-            const normalizedTax = Number.isFinite(bettingTaxValue) ? bettingTaxValue : 0;
-            return (oddsValue * normalizedAmount) - normalizedTax;
+            const taxPercent = parseFloat(bet.bettingTax);
+            const taxRate = Number.isFinite(taxPercent) ? taxPercent / 100 : 0;
+            const taxAmount = normalizedAmount * taxRate;
+            if (isWinner) {
+                return (oddsValue * normalizedAmount) - taxAmount;
+            }
+            return normalizedAmount + taxAmount;
         }
         return 0;
     },
@@ -315,9 +316,10 @@ const SummaryModule = {
                 return;
             }
             if (bet.type === 'Credit') {
-                const bettingTaxValue = parseFloat(bet.bettingTax);
+                const taxPercent = parseFloat(bet.bettingTax);
+                const taxRate = Number.isFinite(taxPercent) ? taxPercent / 100 : 0;
                 totalCreditExposure += payoutValue;
-                totalTaxCollected += Number.isFinite(bettingTaxValue) ? bettingTaxValue : 0;
+                totalTaxCollected += amountValue * taxRate;
             }
         });
 
@@ -957,7 +959,7 @@ const UIModule = {
                 customerInput.placeholder = 'Card number';
                 customerInput.required = true;
                 customerInput.inputMode = 'numeric';
-                customerInput.pattern = '\\d+';
+                customerInput.pattern = '\d+';
                 bettingTaxInput.value = '0';
                 bettingTaxInput.disabled = true;
                 bettingTaxInput.required = false;
