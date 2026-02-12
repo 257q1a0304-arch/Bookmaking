@@ -7,71 +7,109 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <header>
-        <h1>Race Ledger Application</h1>
-        <nav>
-            <ul>
-                <li><a href="#session">Session Module</a></li>
-                <li><a href="#race">Race Module</a></li>
-                <li><a href="#horse">Horse Module</a></li>
-                <li><a href="#bet">Bet Module</a></li>
-                <li><a href="#settlement">Settlement Module</a></li>
-                <li><a href="#summary">Day Summary</a></li>
-            </ul>
-        </nav>
-    </header>
-    <main>
-        <section id="session">
-            <h2>Session Module</h2>
-            <p>Handle user sessions effectively with secure authentication.</p>
-        </section>
-        <section id="race">
-            <h2>Race Module</h2>
-            <p>Details and management of horse races.</p>
-        </section>
-        <section id="horse">
-            <h2>Horse Module</h2>
-            <p>Information about horses and their performance.</p>
-        </section>
-        <section id="bet">
-            <h2>Bet Module</h2>
-            <p>Manage bets and wager tracking.</p>
-        </section>
-        <section id="settlement">
-            <h2>Settlement Module</h2>
-            <p>Auto-detection and settlement of bets after the race.</p>
-        </section>
-        <section id="summary">
-            <h2>Day Summary</h2>
-            <p>Summary of the day’s races and financial performance displayed in a dark-themed dashboard.</p>
-        </section>
-    </main>
-    <footer>
-        <p>&copy; 2026 Bookmaking Application</p>
-    </footer>
-    <style>
-        body {
-            background-color: #212121;
-            color: #ffffff;
-            font-family: Arial, sans-serif;
-        }
-        header, footer {
-            background-color: #424242;
-            padding: 10px;
-        }
-        nav ul {
-            list-style-type: none;
-            padding: 0;
-        }
-        nav ul li {
-            display: inline;
-            margin-right: 15px;
-        }
-        section {
-            margin: 20px 0;
-            border: 1px solid #525252;
-            padding: 15px;
-        }
-    </style>
+    <div id="app">
+        <!-- Session Setup Screen -->
+        <div id="session-screen" class="screen active">
+            <div class="container">
+                <h1>Start New Session</h1>
+                <div class="form-group">
+                    <label for="location-input">Location:</label>
+                    <input type="text" id="location-input" placeholder="Enter location">
+                </div>
+                <div class="form-group">
+                    <label for="date-input">Date:</label>
+                    <input type="date" id="date-input">
+                </div>
+                <button id="start-session-btn" class="btn btn-primary">Start Session</button>
+                <button id="restore-session-btn" class="btn btn-secondary">Restore Previous Session</button>
+            </div>
+        </div>
+
+        <!-- Main Application Screen -->
+        <div id="main-screen" class="screen">
+            <header class="app-header">
+                <div class="header-info">
+                    <h1>Race Ledger</h1>
+                    <div class="session-info">
+                        <span id="display-location"></span> | <span id="display-date"></span>
+                    </div>
+                </div>
+                <div class="header-actions">
+                    <button id="end-day-btn" class="btn btn-danger">End Day</button>
+                </div>
+            </header>
+
+            <div class="main-content">
+                <!-- Race Control Panel -->
+                <section class="race-panel">
+                    <h2>Race Control</h2>
+                    <div class="race-controls">
+                        <button id="add-race-btn" class="btn btn-primary">Add Race</button>
+                        <button id="end-race-btn" class="btn btn-warning">End Current Race</button>
+                        <button id="delete-race-btn" class="btn btn-danger">Delete Race</button>
+                    </div>
+                    <div id="race-tabs" class="race-tabs"></div>
+                </section>
+
+                <!-- Horse Management -->
+                <section class="horse-panel">
+                    <h2>Horse Management - Race <span id="current-race-number">1</span></h2>
+                    <button id="add-horse-btn" class="btn btn-primary">Add Horse</button>
+                    <div id="horse-list" class="horse-list"></div>
+                </section>
+
+                <!-- Bet Entry -->
+                <section class="bet-panel">
+                    <h2>Bet Entry - Race <span id="bet-race-number">1</span></h2>
+                    <div class="table-wrapper">
+                        <table id="bet-table">
+                            <thead>
+                                <tr>
+                                    <th>Customer</th>
+                                    <th>Type</th>
+                                    <th>Horse #</th>
+                                    <th>Odds</th>
+                                    <th>Amount</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="bet-tbody">
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- Settlement -->
+                <section class="settlement-panel">
+                    <h2>Settlement - Race <span id="settlement-race-number">1</span></h2>
+                    <div class="settlement-controls">
+                        <div class="form-group inline">
+                            <label>1st Place:</label>
+                            <input type="number" id="first-place" placeholder="Horse #" min="1">
+                        </div>
+                        <div class="form-group inline">
+                            <label>2nd Place:</label>
+                            <input type="number" id="second-place" placeholder="Horse #" min="1">
+                        </div>
+                        <div class="form-group inline">
+                            <label>3rd Place:</label>
+                            <input type="number" id="third-place" placeholder="Horse #" min="1">
+                        </div>
+                        <button id="settle-race-btn" class="btn btn-success">Settle Race</button>
+                    </div>
+                    <div id="settlement-results" class="settlement-results"></div>
+                </section>
+
+                <!-- Day Summary -->
+                <section class="summary-panel">
+                    <h2>Day Summary</h2>
+                    <button id="view-summary-btn" class="btn btn-primary">View Summary</button>
+                    <div id="summary-content" class="summary-content"></div>
+                </section>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
 </body>
 </html>
